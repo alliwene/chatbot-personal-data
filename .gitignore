@@ -1,0 +1,5 @@
+.env
+youtube/*
+docs/chroma/
+docs/chromahf/
+all-mpnet-base-v2/
