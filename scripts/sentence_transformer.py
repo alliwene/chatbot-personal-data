@@ -1,48 +1,73 @@
-import sagemaker
+import json
+import time
+from typing import Dict, List
+
 import boto3
-
-from sagemaker.huggingface.model import HuggingFaceModel
-
-
-sess = sagemaker.Session()
-
-sagemaker_session_bucket = "sentence-transformers-sagemaker-hf-150523"
-
-try:
-    role = sagemaker.get_execution_role()
-except ValueError:
-    iam = boto3.client("iam")
-    role = iam.get_role(RoleName="AmazonSageMaker-ExecutionRole-20220224T111993")[
-        "Role"
-    ]["Arn"]
-
-sess = sagemaker.Session(default_bucket=sagemaker_session_bucket)
-
-print(f"sagemaker role arn: {role}")
-print(f"sagemaker bucket: {sess.default_bucket()}")
-print(f"sagemaker session region: {sess.boto_region_name}")
-
-repository = "sentence-transformers/all-mpnet-base-v2"
-
-model_id = repository.split("/")[-1]
-s3_location = f"s3://{sess.default_bucket()}/custom_inference/{model_id}/model.tar.gz"
+from langchain import SagemakerEndpoint
+from langchain.embeddings import SagemakerEndpointEmbeddings
+from langchain.embeddings.sagemaker_endpoint import EmbeddingsContentHandler
+from langchain.llms.sagemaker_endpoint import LLMContentHandler
 
 
-# create Hugging Face Model Class
-huggingface_model = HuggingFaceModel(
-    model_data=s3_location,
-    role=role,
-    transformers_version="4.28",
-    pytorch_version="2.0",
-    py_version="py310",
-)
+# extend the SagemakerEndpointEmbeddings class from langchain to provide a custom embedding function
+class SagemakerEndpointEmbeddingsJumpStart(SagemakerEndpointEmbeddings):
+    def embed_documents(
+        self, texts: List[str], chunk_size: int = 5
+    ) -> List[List[float]]:
+        """Compute doc embeddings using a SageMaker Inference Endpoint.
 
-# deploy the endpoint endpoint
-predictor = huggingface_model.deploy(
-    initial_instance_count=1,
-    instance_type="ml.g4dn.xlarge",
-    endpoint_name="sentence-transformers-all-mpnet-base-v2",
-)
+        Args:
+            texts: The list of texts to embed.
+            chunk_size: The chunk size defines how many input texts will
+                be grouped together as request. If None, will use the
+                chunk size specified by the class.
 
-# "ml.g4dn.xlarge"
-# ml.g5.2xlarge
+        Returns:
+            List of embeddings, one for each text.
+        """
+        results = []
+        _chunk_size = len(texts) if chunk_size > len(texts) else chunk_size
+        st = time.time()
+        for i in range(0, len(texts), _chunk_size):
+            response = self._embedding_func(texts[i : i + _chunk_size])
+            results.extend(response)
+        time_taken = time.time() - st
+        print(
+            f"got results for {len(texts)} in {time_taken}s, length of embeddings list is {len(results)}"
+        )
+        return results
+
+
+class ContentHandler(EmbeddingsContentHandler):
+    content_type = "application/json"
+    accepts = "application/json"
+
+    def transform_input(self, inputs: list[str], model_kwargs: Dict) -> bytes:
+        """
+        Transforms the input into bytes that can be consumed by SageMaker endpoint.
+        Args:
+            inputs: List of input strings.
+            model_kwargs: Additional keyword arguments to be passed to the endpoint.
+        Returns:
+            The transformed bytes input.
+        """
+        # Example: inference.py expects a JSON string with a "inputs" key:
+        # input_str = json.dumps({"inputs": inputs, **model_kwargs})
+        input_str = json.dumps({"inputs": inputs, "parameters": model_kwargs})
+        return input_str.encode("utf-8")
+
+    def transform_output(self, output: bytes) -> List[List[float]]:
+        """
+        Transforms the bytes output from the endpoint into a list of embeddings.
+        Args:
+            output: The bytes output from SageMaker endpoint.
+        Returns:
+            The transformed output - list of embeddings
+        Note:
+            The length of the outer list is the number of input strings.
+            The length of the inner lists is the embedding dimension.
+        """
+        # Example: inference.py returns a JSON string with the list of
+        # embeddings in a "vectors" key:
+        response_json = json.loads(output.read().decode("utf-8"))
+        return response_json["vectors"]

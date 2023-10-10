@@ -1,4 +1,9 @@
 import json
+
+import warnings
+
+warnings.simplefilter(action="ignore")
+
 import sagemaker
 import boto3
 from sagemaker.huggingface import HuggingFaceModel, get_huggingface_llm_image_uri
@@ -12,24 +17,29 @@ except ValueError:
     ]["Arn"]
     print(role)
 
-# Hub Model configuration. https://huggingface.co/models
-hub = {"HF_MODEL_ID": "tiiuae/falcon-7b-instruct", "SM_NUM_GPUS": json.dumps(1)}
+model_id = "tiiuae/falcon-40b-instruct"
+num_gpus = 4
+hub = {"HF_MODEL_ID": model_id, "SM_NUM_GPUS": json.dumps(num_gpus)}
 
 print("Creating hf model...")
 # create Hugging Face Model Class
 huggingface_model = HuggingFaceModel(
-    image_uri=get_huggingface_llm_image_uri("huggingface", version="1.0.3"),
+    image_uri=get_huggingface_llm_image_uri("huggingface", version="1.1.0"),
     env=hub,
     role=role,
 )
 
 print("Deploying hf model...")
+
+instance_type = "ml.g5.12xlarge"
+endpoint_name = "falcon-40b-instruct"
+
 # deploy model to SageMaker Inference
 predictor = huggingface_model.deploy(
     initial_instance_count=1,
-    instance_type="ml.g5.2xlarge",
+    instance_type=instance_type,
     container_startup_health_check_timeout=300,
-    endpoint_name="falcon-7b-instruct",
+    endpoint_name=endpoint_name,
 )
 
 
