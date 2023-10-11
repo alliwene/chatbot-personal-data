@@ -4,3 +4,4 @@ docs/chroma/
 docs/chromahf/
 all-mpnet-base-v2/
 scripts/__pycache__/
+scripts/flagged/
